@@ -1,0 +1,38 @@
+name: PR Build Check
+
+on:
+  pull_request:
+    branches: [ "master" ]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up JDK 25
+      uses: actions/setup-java@v4
+      with:
+        java-version: '25'
+        distribution: 'oracle'
+        cache: 'gradle'
+
+    - name: Grant execute permission for gradlew
+      run: chmod +x gradlew
+
+    - name: Build and test
+      run: ./gradlew clean build
+
+    - name: Upload plugin jar
+      uses: actions/upload-artifact@v4
+      with:
+        name: StatusPlugin-pr-${{ github.event.pull_request.number }}
+        path: build/libs/*.jar
+        if-no-files-found: error
