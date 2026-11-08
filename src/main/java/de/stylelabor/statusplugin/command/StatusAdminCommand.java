@@ -10,8 +10,10 @@ import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.minimessage.tag.resolver.Placeholder;
 import org.bukkit.Bukkit;
 import org.bukkit.command.CommandSender;
+import org.bukkit.OfflinePlayer;
 import org.bukkit.entity.Player;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -32,7 +34,7 @@ import java.util.stream.Collectors;
 @SuppressWarnings("UnstableApiUsage")
 public final class StatusAdminCommand implements BasicCommand {
 
-    private static final List<String> SUBCOMMANDS = Arrays.asList("set", "reload", "deaths", "requests", "help");
+    private static final List<String> SUBCOMMANDS = Arrays.asList("set", "clear", "list", "info", "edit", "restrict", "delete", "reload", "deaths", "requests", "help");
     private static final List<String> DEATH_ACTIONS = Arrays.asList("view", "add", "remove", "set", "reset");
     private static final List<String> REQUEST_ACTIONS = Arrays.asList("list", "accept", "deny");
 
@@ -86,6 +88,12 @@ public final class StatusAdminCommand implements BasicCommand {
 
         switch (subCommand) {
             case "set" -> handleSet(sender, args);
+            case "clear" -> handleClear(sender, args);
+            case "list" -> handleList(sender);
+            case "edit" -> handleEdit(sender, args);
+            case "info" -> handleInfo(sender, args);
+            case "restrict" -> handleRestrict(sender, args);
+            case "delete" -> handleDelete(sender, args);
             case "deaths" -> handleDeaths(sender, args);
             case "requests" -> handleRequests(sender, args);
             case "help" -> showUsage(sender);
@@ -106,28 +114,226 @@ public final class StatusAdminCommand implements BasicCommand {
         String targetName = args[1];
         String statusKey = args[2].toUpperCase();
 
-        Player target = Bukkit.getPlayer(targetName);
-        if (target == null) {
-            sender.sendMessage(plugin.parseMessage(configManager.getMessage("admin-status-target-offline")
-                    .replace("<target>", targetName)));
+        OfflinePlayer target = resolveTarget(sender, targetName);
+        if (target == null)
             return;
-        }
 
         if (!statusManager.statusExists(statusKey)) {
             sender.sendMessage(plugin.parseMessage(configManager.getMessage("status-invalid")));
             return;
         }
 
-        statusManager.setStatus(target, statusKey);
-        plugin.getTabListManager().updatePlayer(target);
-        plugin.getNametagManager().updatePlayer(target);
+        statusManager.setStatus(target.getUniqueId(), statusKey);
+        refreshIfOnline(target);
 
-        Component statusDisplay = statusManager.getStatusDisplay(target);
+        Component statusDisplay = statusManager.getStatusDisplay(target.getUniqueId());
         String message = configManager.getMessage("admin-status-set");
         Component formatted = plugin.getMiniMessage().deserialize(message,
-                Placeholder.unparsed("target", target.getName()),
+                Placeholder.unparsed("target", displayName(target, targetName)),
                 Placeholder.component("status", statusDisplay));
         sender.sendMessage(formatted);
+    }
+
+    /**
+     * Handle /status-admin clear <player>
+     */
+    private void handleClear(@NotNull CommandSender sender, @NotNull String[] args) {
+        if (args.length < 2) {
+            sender.sendMessage(plugin.parseMessage(configManager.getMessage("error-invalid-usage")
+                    .replace("<usage>", "/status-admin clear <player>")));
+            return;
+        }
+
+        OfflinePlayer target = resolveTarget(sender, args[1]);
+        if (target == null)
+            return;
+
+        statusManager.clearStatus(target.getUniqueId());
+        refreshIfOnline(target);
+
+        sender.sendMessage(plugin.parseMessage(configManager.getMessage("admin-status-cleared")
+                .replace("<target>", displayName(target, args[1]))));
+    }
+
+    /**
+     * Find an online player, or an offline player who has joined before.
+     * Sends an error message and returns null if neither exists.
+     */
+    @Nullable
+    private OfflinePlayer resolveTarget(@NotNull CommandSender sender, @NotNull String name) {
+        Player online = Bukkit.getPlayer(name);
+        if (online != null) {
+            return online;
+        }
+
+        OfflinePlayer offline = Bukkit.getOfflinePlayer(name);
+        if (!offline.hasPlayedBefore()) {
+            sender.sendMessage(plugin.parseMessage(configManager.getMessage("error-player-not-found")));
+            return null;
+        }
+        return offline;
+    }
+
+    private void refreshIfOnline(@NotNull OfflinePlayer target) {
+        Player online = target.getPlayer();
+        if (online != null) {
+            plugin.getTabListManager().updatePlayer(online);
+            plugin.getNametagManager().updatePlayer(online);
+        }
+    }
+
+    @NotNull
+    private String displayName(@NotNull OfflinePlayer target, @NotNull String fallback) {
+        return target.getName() != null ? target.getName() : fallback;
+    }
+
+    /**
+     * Handle /status-admin list
+     */
+    private void handleList(@NotNull CommandSender sender) {
+        Collection<String> keys = statusManager.getAvailableStatuses();
+        sender.sendMessage(plugin.parseMessage(configManager.getMessage("admin-status-list-header")
+                .replace("<count>", String.valueOf(keys.size()))));
+
+        String itemFormat = configManager.getMessage("admin-status-list-item");
+        for (String key : keys) {
+            String format = statusManager.getStatusFormatByKey(key);
+            Component display = plugin.parseMessage(format != null ? format : "");
+            sender.sendMessage(plugin.getMiniMessage().deserialize(itemFormat,
+                    Placeholder.unparsed("key", key),
+                    Placeholder.component("status_display", display)));
+        }
+    }
+
+    /**
+     * Handle /status-admin edit <key> <format>
+     */
+    private void handleEdit(@NotNull CommandSender sender, @NotNull String[] args) {
+        if (args.length < 3) {
+            sender.sendMessage(plugin.parseMessage(configManager.getMessage("error-invalid-usage")
+                    .replace("<usage>", "/status-admin edit <status> <format>")));
+            return;
+        }
+
+        String key = args[1].toUpperCase();
+        if (!statusManager.statusExists(key)) {
+            sender.sendMessage(plugin.parseMessage(configManager.getMessage("status-invalid")));
+            return;
+        }
+
+        String format = String.join(" ", Arrays.copyOfRange(args, 2, args.length));
+        statusManager.editStatus(key, format);
+        refreshOnlinePlayers();
+
+        sender.sendMessage(plugin.parseMessage(configManager.getMessage("admin-status-edited")
+                .replace("<key>", key)));
+    }
+
+    /**
+     * Handle /status-admin delete <key>
+     */
+    private void handleDelete(@NotNull CommandSender sender, @NotNull String[] args) {
+        if (args.length < 2) {
+            sender.sendMessage(plugin.parseMessage(configManager.getMessage("error-invalid-usage")
+                    .replace("<usage>", "/status-admin delete <status>")));
+            return;
+        }
+
+        String key = args[1].toUpperCase();
+        if (!statusManager.statusExists(key)) {
+            sender.sendMessage(plugin.parseMessage(configManager.getMessage("status-invalid")));
+            return;
+        }
+
+        int cleared = statusManager.deleteStatus(key).size();
+        refreshOnlinePlayers();
+
+        sender.sendMessage(plugin.parseMessage(configManager.getMessage("admin-status-deleted")
+                .replace("<key>", key)
+                .replace("<count>", String.valueOf(cleared))));
+    }
+
+    /**
+     * Handle /status-admin info <player>
+     */
+    private void handleInfo(@NotNull CommandSender sender, @NotNull String[] args) {
+        if (args.length < 2) {
+            sender.sendMessage(plugin.parseMessage(configManager.getMessage("error-invalid-usage")
+                    .replace("<usage>", "/status-admin info <player>")));
+            return;
+        }
+
+        OfflinePlayer target = resolveTarget(sender, args[1]);
+        if (target == null)
+            return;
+
+        java.util.UUID uuid = target.getUniqueId();
+        String name = displayName(target, args[1]);
+        String key = statusManager.getStatus(uuid);
+
+        Component statusDisplay = key != null
+                ? statusManager.getStatusDisplay(uuid)
+                : plugin.parseMessage(configManager.getMessage("admin-info-none"));
+        long pending = requestManager.getPendingRequests().stream()
+                .filter(r -> r.playerUuid().equals(uuid))
+                .count();
+
+        sender.sendMessage(plugin.parseMessage(configManager.getMessage("admin-info-header")
+                .replace("<target>", name)));
+        sender.sendMessage(plugin.getMiniMessage().deserialize(configManager.getMessage("admin-info-status"),
+                Placeholder.unparsed("key", key != null ? key : "-"),
+                Placeholder.component("status_display", statusDisplay)));
+        sender.sendMessage(plugin.parseMessage(configManager.getMessage("admin-info-deaths")
+                .replace("<deaths>", String.valueOf(deathTracker.getDeaths(uuid)))));
+        sender.sendMessage(plugin.parseMessage(configManager.getMessage("admin-info-requests")
+                .replace("<count>", String.valueOf(pending))));
+        sender.sendMessage(plugin.parseMessage(configManager.getMessage(
+                target.isOnline() ? "admin-info-online" : "admin-info-offline")));
+    }
+
+    /**
+     * Handle /status-admin restrict <status> <permission|none>
+     */
+    private void handleRestrict(@NotNull CommandSender sender, @NotNull String[] args) {
+        if (args.length < 2) {
+            sender.sendMessage(plugin.parseMessage(configManager.getMessage("error-invalid-usage")
+                    .replace("<usage>", "/status-admin restrict <status> [permission|none]")));
+            return;
+        }
+
+        String key = args[1].toUpperCase();
+        if (!statusManager.statusExists(key)) {
+            sender.sendMessage(plugin.parseMessage(configManager.getMessage("status-invalid")));
+            return;
+        }
+
+        if (args.length < 3) {
+            String current = statusManager.getRestriction(key);
+            sender.sendMessage(plugin.parseMessage(configManager.getMessage("admin-restrict-view")
+                    .replace("<key>", key)
+                    .replace("<permission>", current != null ? current : "none")));
+            return;
+        }
+
+        String permission = args[2];
+        if (permission.equalsIgnoreCase("none")) {
+            statusManager.setRestriction(key, null);
+            sender.sendMessage(plugin.parseMessage(configManager.getMessage("admin-restrict-removed")
+                    .replace("<key>", key)));
+            return;
+        }
+
+        statusManager.setRestriction(key, permission);
+        sender.sendMessage(plugin.parseMessage(configManager.getMessage("admin-restrict-set")
+                .replace("<key>", key)
+                .replace("<permission>", permission)));
+    }
+
+    private void refreshOnlinePlayers() {
+        for (Player online : Bukkit.getOnlinePlayers()) {
+            plugin.getTabListManager().updatePlayer(online);
+            plugin.getNametagManager().updatePlayer(online);
+        }
     }
 
     /**
@@ -390,6 +596,18 @@ public final class StatusAdminCommand implements BasicCommand {
         sender.sendMessage(plugin.parseMessage("<gray>StatusPlugin Admin Commands:"));
         sender.sendMessage(plugin
                 .parseMessage("<white>/status-admin set <player> <status></white> <gray>- Set player's status</gray>"));
+        sender.sendMessage(plugin
+                .parseMessage("<white>/status-admin clear <player></white> <gray>- Clear player's status</gray>"));
+        sender.sendMessage(
+                plugin.parseMessage("<white>/status-admin list</white> <gray>- List all statuses</gray>"));
+        sender.sendMessage(plugin
+                .parseMessage("<white>/status-admin edit <status> <format></white> <gray>- Change a status format</gray>"));
+        sender.sendMessage(plugin
+                .parseMessage("<white>/status-admin delete <status></white> <gray>- Delete a status</gray>"));
+        sender.sendMessage(plugin
+                .parseMessage("<white>/status-admin info <player></white> <gray>- Show status, deaths and requests</gray>"));
+        sender.sendMessage(plugin
+                .parseMessage("<white>/status-admin restrict <status> [permission|none]</white> <gray>- Set status permission</gray>"));
         sender.sendMessage(
                 plugin.parseMessage("<white>/status-admin reload</white> <gray>- Reload configuration</gray>"));
         sender.sendMessage(plugin
@@ -435,15 +653,24 @@ public final class StatusAdminCommand implements BasicCommand {
         String subCommand = args[0].toLowerCase();
 
         if (args.length == 2) {
-            if (subCommand.equals("set") || subCommand.equals("deaths")) {
+            if (subCommand.equals("set") || subCommand.equals("clear") || subCommand.equals("info")) {
+                return filterStartsWith(getKnownPlayerNames(), args[1]);
+            }
+            if (subCommand.equals("deaths")) {
                 return filterStartsWith(getOnlinePlayerNames(), args[1]);
             }
             if (subCommand.equals("requests")) {
                 return filterStartsWith(REQUEST_ACTIONS, args[1]);
             }
+            if (subCommand.equals("edit") || subCommand.equals("restrict") || subCommand.equals("delete")) {
+                return filterStartsWith(new ArrayList<>(statusManager.getAvailableStatuses()), args[1]);
+            }
         }
 
         if (args.length == 3) {
+            if (subCommand.equals("restrict")) {
+                return filterStartsWith(List.of("none"), args[2]);
+            }
             if (subCommand.equals("set")) {
                 return filterStartsWith(new ArrayList<>(statusManager.getAvailableStatuses()), args[2]);
             }
@@ -483,6 +710,17 @@ public final class StatusAdminCommand implements BasicCommand {
         }
 
         return Collections.emptyList();
+    }
+
+    @NotNull
+    private List<String> getKnownPlayerNames() {
+        java.util.Set<String> names = new java.util.LinkedHashSet<>(getOnlinePlayerNames());
+        for (OfflinePlayer p : Bukkit.getOfflinePlayers()) {
+            if (p.getName() != null) {
+                names.add(p.getName());
+            }
+        }
+        return new ArrayList<>(names);
     }
 
     @NotNull

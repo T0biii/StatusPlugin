@@ -257,6 +257,34 @@ public final class StatusManager {
     }
 
     /**
+     * Change the format of an existing status.
+     */
+    public void editStatus(@NotNull String statusKey, @NotNull String format) {
+        configManager.addStatusOption(statusKey, format);
+        loadStatusOptions();
+    }
+
+    /**
+     * Delete a status and clear it from every player that currently uses it.
+     *
+     * @return the UUIDs of players whose status was cleared
+     */
+    public List<UUID> deleteStatus(@NotNull String statusKey) {
+        String key = statusKey.toUpperCase();
+        configManager.removeStatusOption(key);
+        loadStatusOptions();
+
+        List<UUID> affected = new ArrayList<>();
+        playerStatuses.forEach((uuid, status) -> {
+            if (key.equalsIgnoreCase(status)) {
+                affected.add(uuid);
+            }
+        });
+        affected.forEach(this::clearStatus);
+        return affected;
+    }
+
+    /**
      * Check if a status exists
      */
     public boolean statusExists(@NotNull String statusKey) {
@@ -273,6 +301,22 @@ public final class StatusManager {
             return true; // No restriction
         }
         return player.hasPermission(permission);
+    }
+
+    /**
+     * Get the permission required for a status, or null if unrestricted
+     */
+    @Nullable
+    public String getRestriction(@NotNull String statusKey) {
+        return statusRestrictions.get(statusKey.toUpperCase());
+    }
+
+    /**
+     * Set the permission required for a status; null removes the restriction
+     */
+    public void setRestriction(@NotNull String statusKey, @Nullable String permission) {
+        configManager.setStatusRestriction(statusKey, permission);
+        loadStatusOptions();
     }
 
     /**

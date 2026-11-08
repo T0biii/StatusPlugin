@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### Added
+- `/status-admin clear <player>`, `list`, `edit <status> <format>` and `delete <status>`. Deleting a status clears it from every player who had it. New messages are in `language.yml`.
+- `/status-admin info <player>` (works for offline players) and `/status-admin restrict <status> [permission|none]`.
+- `/status-admin set` and `clear` now also work for offline players who have joined before.
+
+---
+
 ## [7.1.5] - 2026-10-09
 
 ### Added
