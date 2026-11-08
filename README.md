@@ -41,8 +41,8 @@
 | `/status-clear` | None | Clear your active status |
 | `/status-preview <status>` | None | Preview how a status looks in chat |
 | `/status-suggest <format>` | None | Suggest a custom status (`/status-suggest info` for help) |
-| `/status-admin set <player> <status>` | `statusplugin.admin` | Set another player's status |
-| `/status-admin clear <player>` | `statusplugin.admin` | Remove a player's status |
+| `/status-admin set <player> <status>` | `statusplugin.admin` | Set another player's status (works for offline players) |
+| `/status-admin clear <player>` | `statusplugin.admin` | Remove a player's status (works for offline players) |
 | `/status-admin list` | `statusplugin.admin` | List all available statuses |
 | `/status-admin edit <status> <format>` | `statusplugin.admin` | Change the format of an existing status |
 | `/status-admin delete <status>` | `statusplugin.admin` | Delete a status and clear it from all players using it |

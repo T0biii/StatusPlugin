@@ -10,8 +10,10 @@ import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.minimessage.tag.resolver.Placeholder;
 import org.bukkit.Bukkit;
 import org.bukkit.command.CommandSender;
+import org.bukkit.OfflinePlayer;
 import org.bukkit.entity.Player;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -112,26 +114,22 @@ public final class StatusAdminCommand implements BasicCommand {
         String targetName = args[1];
         String statusKey = args[2].toUpperCase();
 
-        Player target = Bukkit.getPlayer(targetName);
-        if (target == null) {
-            sender.sendMessage(plugin.parseMessage(configManager.getMessage("admin-status-target-offline")
-                    .replace("<target>", targetName)));
+        OfflinePlayer target = resolveTarget(sender, targetName);
+        if (target == null)
             return;
-        }
 
         if (!statusManager.statusExists(statusKey)) {
             sender.sendMessage(plugin.parseMessage(configManager.getMessage("status-invalid")));
             return;
         }
 
-        statusManager.setStatus(target, statusKey);
-        plugin.getTabListManager().updatePlayer(target);
-        plugin.getNametagManager().updatePlayer(target);
+        statusManager.setStatus(target.getUniqueId(), statusKey);
+        refreshIfOnline(target);
 
-        Component statusDisplay = statusManager.getStatusDisplay(target);
+        Component statusDisplay = statusManager.getStatusDisplay(target.getUniqueId());
         String message = configManager.getMessage("admin-status-set");
         Component formatted = plugin.getMiniMessage().deserialize(message,
-                Placeholder.unparsed("target", target.getName()),
+                Placeholder.unparsed("target", displayName(target, targetName)),
                 Placeholder.component("status", statusDisplay));
         sender.sendMessage(formatted);
     }
@@ -146,19 +144,47 @@ public final class StatusAdminCommand implements BasicCommand {
             return;
         }
 
-        Player target = Bukkit.getPlayer(args[1]);
-        if (target == null) {
-            sender.sendMessage(plugin.parseMessage(configManager.getMessage("admin-status-target-offline")
-                    .replace("<target>", args[1])));
+        OfflinePlayer target = resolveTarget(sender, args[1]);
+        if (target == null)
             return;
-        }
 
-        statusManager.clearStatus(target);
-        plugin.getTabListManager().updatePlayer(target);
-        plugin.getNametagManager().updatePlayer(target);
+        statusManager.clearStatus(target.getUniqueId());
+        refreshIfOnline(target);
 
         sender.sendMessage(plugin.parseMessage(configManager.getMessage("admin-status-cleared")
-                .replace("<target>", target.getName())));
+                .replace("<target>", displayName(target, args[1]))));
+    }
+
+    /**
+     * Find an online player, or an offline player who has joined before.
+     * Sends an error message and returns null if neither exists.
+     */
+    @Nullable
+    private OfflinePlayer resolveTarget(@NotNull CommandSender sender, @NotNull String name) {
+        Player online = Bukkit.getPlayer(name);
+        if (online != null) {
+            return online;
+        }
+
+        OfflinePlayer offline = Bukkit.getOfflinePlayer(name);
+        if (!offline.hasPlayedBefore()) {
+            sender.sendMessage(plugin.parseMessage(configManager.getMessage("error-player-not-found")));
+            return null;
+        }
+        return offline;
+    }
+
+    private void refreshIfOnline(@NotNull OfflinePlayer target) {
+        Player online = target.getPlayer();
+        if (online != null) {
+            plugin.getTabListManager().updatePlayer(online);
+            plugin.getNametagManager().updatePlayer(online);
+        }
+    }
+
+    @NotNull
+    private String displayName(@NotNull OfflinePlayer target, @NotNull String fallback) {
+        return target.getName() != null ? target.getName() : fallback;
     }
 
     /**
@@ -237,17 +263,12 @@ public final class StatusAdminCommand implements BasicCommand {
             return;
         }
 
-        org.bukkit.OfflinePlayer target = Bukkit.getPlayer(args[1]);
-        if (target == null) {
-            target = Bukkit.getOfflinePlayer(args[1]);
-            if (!target.hasPlayedBefore()) {
-                sender.sendMessage(plugin.parseMessage(configManager.getMessage("error-player-not-found")));
-                return;
-            }
-        }
+        OfflinePlayer target = resolveTarget(sender, args[1]);
+        if (target == null)
+            return;
 
         java.util.UUID uuid = target.getUniqueId();
-        String name = target.getName() != null ? target.getName() : args[1];
+        String name = displayName(target, args[1]);
         String key = statusManager.getStatus(uuid);
 
         Component statusDisplay = key != null
@@ -632,7 +653,10 @@ public final class StatusAdminCommand implements BasicCommand {
         String subCommand = args[0].toLowerCase();
 
         if (args.length == 2) {
-            if (subCommand.equals("set") || subCommand.equals("clear") || subCommand.equals("info") || subCommand.equals("deaths")) {
+            if (subCommand.equals("set") || subCommand.equals("clear") || subCommand.equals("info")) {
+                return filterStartsWith(getKnownPlayerNames(), args[1]);
+            }
+            if (subCommand.equals("deaths")) {
                 return filterStartsWith(getOnlinePlayerNames(), args[1]);
             }
             if (subCommand.equals("requests")) {
@@ -686,6 +710,17 @@ public final class StatusAdminCommand implements BasicCommand {
         }
 
         return Collections.emptyList();
+    }
+
+    @NotNull
+    private List<String> getKnownPlayerNames() {
+        java.util.Set<String> names = new java.util.LinkedHashSet<>(getOnlinePlayerNames());
+        for (OfflinePlayer p : Bukkit.getOfflinePlayers()) {
+            if (p.getName() != null) {
+                names.add(p.getName());
+            }
+        }
+        return new ArrayList<>(names);
     }
 
     @NotNull
