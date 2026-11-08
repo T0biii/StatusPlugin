@@ -4,6 +4,7 @@ import de.stylelabor.statusplugin.StatusPlugin;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.File;
 import java.io.IOException;
@@ -203,6 +204,32 @@ public class ConfigManager {
         try {
             statusOptions.save(statusOptionsFile);
             plugin.debug("Added new status option: " + key + " = " + format);
+        } catch (IOException e) {
+            plugin.log(Level.SEVERE, "Failed to save status-options.yml: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Set (or, with null, remove) the permission required for a status and save
+     */
+    public void setStatusRestriction(@NotNull String key, @Nullable String permission) {
+        statusOptions.set("restrictions." + key.toUpperCase(), permission);
+        try {
+            statusOptions.save(statusOptionsFile);
+        } catch (IOException e) {
+            plugin.log(Level.SEVERE, "Failed to save status-options.yml: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Remove a status option (and its restriction) from status-options.yml and save
+     */
+    public void removeStatusOption(@NotNull String key) {
+        statusOptions.set("statuses." + key.toUpperCase(), null);
+        statusOptions.set("restrictions." + key.toUpperCase(), null);
+        try {
+            statusOptions.save(statusOptionsFile);
+            plugin.debug("Removed status option: " + key);
         } catch (IOException e) {
             plugin.log(Level.SEVERE, "Failed to save status-options.yml: " + e.getMessage());
         }
